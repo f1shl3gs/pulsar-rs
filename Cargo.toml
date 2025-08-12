@@ -45,7 +45,7 @@ serde = { version = "^1.0.219", features = ["derive"], optional = true }
 serde_json = { version = "^1.0.140", optional = true }
 tokio = { version = "^1.45.0", features = ["rt", "net", "time"], optional = true }
 tokio-util = { version = "^0.7.15", features = ["codec"], optional = true }
-tokio-rustls = { version = "0.26.2", optional = true }
+tokio-rustls = { version = "0.26.2", optional = true, default-features = false }
 tokio-native-tls = { version = "^0.3.1", optional = true }
 tracing = { version = "^0.1.41", optional = true }
 url = "^2.5.4"
@@ -73,3 +73,5 @@ protobuf-src = ["dep:protobuf-src"]
 telemetry = ["tracing"]
 tokio-runtime = ["tokio", "tokio-util", "native-tls", "tokio-native-tls"]
 tokio-rustls-runtime = ["tokio", "tokio-util", "tokio-rustls", "rustls", "webpki-roots"]
+tokio-rustls-ring = ["tokio-rustls/ring"]
+tokio-rustls-aws_lc_rs = ["tokio-rustls/aws_lc_rs"]
