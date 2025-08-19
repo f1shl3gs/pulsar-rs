@@ -61,7 +61,6 @@ pub mod oauth2 {
 
     use async_trait::async_trait;
     use data_url::DataUrl;
-    use nom::lib::std::ops::Add;
     use oauth2::{
         basic::{BasicClient, BasicTokenResponse},
         reqwest,
@@ -113,8 +112,8 @@ pub mod oauth2 {
         fn from(resp: BasicTokenResponse) -> Self {
             let now = Instant::now();
             CachedToken {
-                expiring_at: resp.expires_in().map(|d| now.add(d.mul_f32(0.9))),
-                expired_at: resp.expires_in().map(|d| now.add(d)),
+                expiring_at: resp.expires_in().map(|d| now + d.mul_f32(0.9)),
+                expired_at: resp.expires_in().map(|d| now + d),
                 token_secret: resp.access_token().secret().clone().into_bytes(),
             }
         }

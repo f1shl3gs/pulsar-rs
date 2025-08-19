@@ -74,7 +74,7 @@
 //!     let mut counter = 0usize;
 //!     loop {
 //!         producer
-//!             .send(TestData {
+//!             .send_non_blocking(TestData {
 //!                 data: "data".to_string(),
 //!             })
 //!             .await?;
@@ -153,7 +153,6 @@
 extern crate futures;
 #[macro_use]
 extern crate log;
-extern crate nom;
 extern crate prost_derive;
 
 #[cfg(test)]

@@ -2,12 +2,6 @@
 use std::{convert::TryFrom, io::Cursor};
 
 use bytes::{Buf, BufMut, BytesMut};
-use nom::{
-    bytes::streaming::take,
-    combinator::{map_res, verify},
-    number::streaming::{be_u16, be_u32},
-    IResult,
-};
 use prost::{self, Message as ImplProtobuf};
 
 use self::proto::*;
@@ -286,18 +280,14 @@ impl tokio_util::codec::Decoder for Codec {
             if src.len() >= message_size {
                 let msg = {
                     let (buf, command_frame) =
-                        command_frame(&src[..message_size]).map_err(|err| {
-                            ConnectionError::Decoding(format!(
-                                "Error decoding command frame: {err:?}"
-                            ))
+                        command_frame(&src[..message_size]).map_err(|_err| {
+                            ConnectionError::Decoding("Error decoding command frame".to_string())
                         })?;
                     let command = BaseCommand::decode(command_frame.command)?;
 
                     let payload = if !buf.is_empty() {
-                        let (buf, payload_frame) = payload_frame(buf).map_err(|err| {
-                            ConnectionError::Decoding(format!(
-                                "Error decoding payload frame: {err:?}"
-                            ))
+                        let (buf, payload_frame) = payload_frame(buf).map_err(|_err| {
+                            ConnectionError::Decoding("Error decoding payload frame".to_string())
                         })?;
 
                         // TODO: Check crc32 of payload data
@@ -391,18 +381,14 @@ impl asynchronous_codec::Decoder for Codec {
             if src.len() >= message_size {
                 let msg = {
                     let (buf, command_frame) =
-                        command_frame(&src[..message_size]).map_err(|err| {
-                            ConnectionError::Decoding(format!(
-                                "Error decoding command frame: {err:?}"
-                            ))
+                        command_frame(&src[..message_size]).map_err(|_err| {
+                            ConnectionError::Decoding("Error decoding command frame".to_string())
                         })?;
                     let command = BaseCommand::decode(command_frame.command)?;
 
                     let payload = if !buf.is_empty() {
-                        let (buf, payload_frame) = payload_frame(buf).map_err(|err| {
-                            ConnectionError::Decoding(format!(
-                                "Error decoding payload frame: {err:?}"
-                            ))
+                        let (buf, payload_frame) = payload_frame(buf).map_err(|_err| {
+                            ConnectionError::Decoding("Error decoding payload frame".to_string())
                         })?;
 
                         // TODO: Check crc32 of payload data
@@ -447,17 +433,23 @@ struct CommandFrame<'a> {
 }
 
 #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
-fn command_frame(i: &[u8]) -> IResult<&[u8], CommandFrame> {
-    let (i, total_size) = be_u32(i)?;
-    let (i, command_size) = be_u32(i)?;
-    let (i, command) = take(command_size)(i)?;
+fn command_frame(input: &[u8]) -> Result<(&[u8], CommandFrame), ()> {
+    if input.len() <= 8 {
+        return Err(());
+    }
+
+    let total_size = u32::from_be_bytes((&input[..4]).try_into().unwrap());
+    let command_size = u32::from_be_bytes((&input[4..8]).try_into().unwrap());
+    if 8 + (command_size as usize) > input.len() {
+        return Err(());
+    }
 
     Ok((
-        i,
+        &input[8 + command_size as usize..],
         CommandFrame {
             total_size,
             command_size,
-            command,
+            command: &input[8..8 + command_size as usize],
         },
     ))
 }
@@ -473,19 +465,27 @@ struct PayloadFrame<'a> {
 }
 
 #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
-fn payload_frame(i: &[u8]) -> IResult<&[u8], PayloadFrame> {
-    let (i, magic_number) = be_u16(i)?;
-    let (i, checksum) = be_u32(i)?;
-    let (i, metadata_size) = be_u32(i)?;
-    let (i, metadata) = take(metadata_size)(i)?;
+fn payload_frame(input: &[u8]) -> Result<(&[u8], PayloadFrame), ()> {
+    if input.len() < 2 + 4 + 4 {
+        // too short
+        return Err(());
+    }
+
+    let magic_number = u16::from_be_bytes((&input[..2]).try_into().unwrap());
+    let checksum = u32::from_be_bytes((&input[2..6]).try_into().unwrap());
+    let metadata_size = u32::from_be_bytes((&input[6..10]).try_into().unwrap());
+    if 2 + 4 + 4 + metadata_size as usize > input.len() {
+        // too short
+        return Err(());
+    }
 
     Ok((
-        i,
+        &input[10 + metadata_size as usize..],
         PayloadFrame {
             magic_number,
             checksum,
             metadata_size,
-            metadata,
+            metadata: &input[10..10 + metadata_size as usize],
         },
     ))
 }
@@ -496,18 +496,28 @@ pub(crate) struct BatchedMessage {
 }
 
 #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
-fn batched_message(i: &[u8]) -> IResult<&[u8], BatchedMessage> {
-    let (i, metadata_size) = be_u32(i)?;
-    let (i, metadata) = verify(
-        map_res(take(metadata_size), SingleMessageMetadata::decode),
-        // payload_size is defined as i32 in protobuf
-        |metadata| metadata.payload_size >= 0,
-    )(i)?;
+fn batched_message(input: &[u8]) -> Result<(&[u8], BatchedMessage), ()> {
+    if input.len() < 4 {
+        // too short
+        return Err(());
+    }
 
-    let (i, payload) = take(metadata.payload_size as u32)(i)?;
+    let metadata_size = u32::from_be_bytes((&input[..4]).try_into().unwrap()) as usize;
+    let metadata =
+        SingleMessageMetadata::decode(&input[4..4 + metadata_size]).map_err(|_err| ())?;
+    if metadata.payload_size < 0 {
+        return Err(());
+    }
+
+    if 4 + metadata_size + metadata.payload_size as usize > input.len() {
+        return Err(());
+    }
+
+    let payload = &input[4 + metadata_size..4 + metadata_size + metadata.payload_size as usize];
+    let remaining = &input[4 + metadata_size + metadata.payload_size as usize..];
 
     Ok((
-        i,
+        remaining,
         BatchedMessage {
             metadata,
             payload: payload.to_vec(),
@@ -518,13 +528,20 @@ fn batched_message(i: &[u8]) -> IResult<&[u8], BatchedMessage> {
 #[cfg_attr(feature = "telemetry", tracing::instrument(skip_all))]
 pub(crate) fn parse_batched_message(
     count: u32,
-    payload: &[u8],
+    mut payload: &[u8],
 ) -> Result<Vec<BatchedMessage>, ConnectionError> {
-    let (_, result) =
-        nom::multi::count(batched_message, count as usize)(payload).map_err(|err| {
-            ConnectionError::Decoding(format!("Error decoding batched messages: {err:?}"))
+    let mut msgs = Vec::with_capacity(count as usize);
+
+    for _ in 0..count {
+        let (remaining, msg) = batched_message(payload).map_err(|_err| {
+            ConnectionError::Decoding("Error decoding batched messages".to_string())
         })?;
-    Ok(result)
+
+        payload = remaining;
+        msgs.push(msg);
+    }
+
+    Ok(msgs)
 }
 
 impl BatchedMessage {
