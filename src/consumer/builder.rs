@@ -4,7 +4,8 @@ use std::{
 };
 
 use futures::{future::try_join_all, StreamExt};
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{ Rng};
+use rand::distr::Alphanumeric;
 use regex::Regex;
 
 use crate::{
@@ -196,7 +197,7 @@ impl<Exe: Executor> ConsumerBuilder<Exe> {
 
         if consumer_name.is_none() {
             let s: String = (0..8)
-                .map(|_| rand::thread_rng().sample(Alphanumeric))
+                .map(|_| rand::rng().sample(Alphanumeric))
                 .map(|c| c as char)
                 .collect();
             consumer_name = Some(format!("consumer_{s}"));
@@ -238,7 +239,7 @@ impl<Exe: Executor> ConsumerBuilder<Exe> {
         };
         let subscription = subscription.unwrap_or_else(|| {
             let s: String = (0..8)
-                .map(|_| rand::thread_rng().sample(Alphanumeric))
+                .map(|_| rand::rng().sample(Alphanumeric))
                 .map(|c| c as char)
                 .collect();
             let subscription = format!("sub_{s}");
